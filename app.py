@@ -1,5 +1,6 @@
 import streamlit as st
 import os
+import json
 from dotenv import load_dotenv
 from langchain_groq import ChatGroq
 from langchain_huggingface import HuggingFaceEmbeddings
@@ -11,10 +12,48 @@ from langchain_core.prompts import ChatPromptTemplate
 # 1. Load API Keys
 load_dotenv()
 
+# --- NEW: History Management Functions ---
+HISTORY_FILE = "chat_history.json"
+
+def load_chat_history():
+    """Loads chat history from a JSON file so others can see it."""
+    if os.path.exists(HISTORY_FILE):
+        try:
+            with open(HISTORY_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            st.sidebar.error(f"Error loading history: {e}")
+            return []
+    return []
+
+def save_chat_history(messages):
+    """Saves the current chat history to a JSON file."""
+    with open(HISTORY_FILE, "w", encoding="utf-8") as f:
+        json.dump(messages, f, indent=4)
+# -----------------------------------------
+
 # 2. Setup Streamlit Page (The UI)
-st.set_page_config(page_title="NanoPhysics AI Assistant", page_icon="🔬")
+st.set_page_config(page_title="NanoPhysics AI Assistant", page_icon="🔬", layout="wide")
 st.title("🔬 NanoPhysics & Nanoelectronics AI Assistant")
 st.markdown("Ask me any question, and I will search across your nanophysics textbooks to write a highly detailed, essay-style answer!")
+
+# --- NEW: Sidebar for Saving/Clearing Chat ---
+with st.sidebar:
+    st.header("💾 Shared Knowledge Base")
+    st.markdown("Save valuable explanations here so others can learn from them!")
+    
+    # Save Button
+    if st.button("💾 Save Chat for Everyone", use_container_width=True):
+        save_chat_history(st.session_state.messages)
+        st.success("Success! The conversation is now permanently saved.")
+        
+    st.divider()
+    
+    # Clear Button (Only clears the current screen, doesn't delete the saved file)
+    if st.button("🧹 Clear My Screen", use_container_width=True):
+        st.session_state.messages = []
+        st.rerun()
+# ---------------------------------------------
 
 # 3. Cache the heavy AI models so the app doesn't slow down
 @st.cache_resource
@@ -59,13 +98,13 @@ Detailed Essay Answer:
 
 document_chain = create_stuff_documents_chain(llm, prompt)
 
-# Search the database for the top 8 most relevant paragraphs (Increased for deeper context)
+# Search the database for the top 8 most relevant paragraphs
 retriever = vectorstore.as_retriever(search_kwargs={"k": 8}) 
 rag_chain = create_retrieval_chain(retriever, document_chain)
 
-# 5. Build the Chat History UI
+# 5. Build the Chat History UI (Now loads from the saved file!)
 if "messages" not in st.session_state:
-    st.session_state.messages = []
+    st.session_state.messages = load_chat_history()
 
 # Display previous chat messages
 for message in st.session_state.messages:
@@ -86,7 +125,7 @@ if user_input := st.chat_input("Ask a physics question..."):
             response = rag_chain.invoke({"input": user_input})
             answer = response["answer"]
             
-            # PRO FEATURE: Source Citations (UPDATED FOR MULTIPLE BOOKS)
+            # PRO FEATURE: Source Citations
             sources = []
             for doc in response["context"]:
                 if 'page' in doc.metadata and 'source' in doc.metadata:
