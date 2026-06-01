@@ -5,7 +5,7 @@ An AI-powered web application that allows users to perform semantic search and "
 [Click here to view the live app!](https://multisourcerag-dypf8vhybzrixpbgpxxtbq.streamlit.app/)
 
 ## 🛠️ Architecture & Tech Stack
-This project utilizes Retrieval-Augmented Generation (RAG) to ground the Large Language Model's answers strictly in verified textbook data, minimizing the risk of AI hallucinations.
+This project utilizes Retrieval-Augmented Generation (RAG) to ground the Large Language Model's answers strictly in verified textbook data, minimizing the risk of AI hallucinations [1].
 * **Frontend:** Streamlit
 * **LLM:** Meta Llama-3.1-8B (via Groq Cloud for ultra-fast, low-latency inference)
 * **Vector Database:** Pinecone
@@ -29,23 +29,16 @@ The vector database contains parsed, chunked, and embedded contents from 21 dist
 
 ## ⚙️ How It Works (Local Setup)
 
-1. **Clone the Repository:**
+1. **Clone the Repository**
    ```bash
-   git clone https://github.com/your-username/your-repo-name.git
-   cd your-repo-name
+   git clone https://github.com/jyojokooz/multi_source_rag.git
+   cd multi_source_rag  
 
-   Install Dependencies
+   pip install -r requirements.txt
 
-    pip install -r requirements.txt
-    3. Configure Environment Variables
-    Create a .env file in the root directory:
+   GROQ_API_KEY="your_groq_api_key"
+   PINECONE_API_KEY="your_pinecone_api_key"
 
-    GROQ_API_KEY="your_groq_api_key"
-    PINECONE_API_KEY="your_pinecone_api_key"
-    4. Vectorize Textbooks
-    Place your PDF files in a /books folder and run the smart ingestion script:
- 
-    python ingest.py
-    5. Run the Application
-    
-    streamlit run app.py
+   python ingest.py
+
+   streamlit run app.py
