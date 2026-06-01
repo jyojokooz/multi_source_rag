@@ -12,71 +12,54 @@ from langchain_core.prompts import ChatPromptTemplate
 # 1. Load API Keys
 load_dotenv()
 
-# --- NEW: History Management Functions ---
+# --- NEW: Smart History Management ---
 HISTORY_FILE = "chat_history.json"
 
-def load_chat_history():
-    """Loads chat history from a JSON file so others can see it."""
+def load_history():
+    """Loads all previously asked questions and answers from the file."""
     if os.path.exists(HISTORY_FILE):
         try:
             with open(HISTORY_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception as e:
-            st.sidebar.error(f"Error loading history: {e}")
+                data = json.load(f)
+                
+                # NEW: Only load items that actually have the "question" and "answer" keys. 
+                # This ignores any old or corrupted formats!
+                valid_history = [item for item in data if "question" in item and "answer" in item]
+                return valid_history
+        except Exception:
             return []
     return []
 
-def save_chat_history(messages):
-    """Saves the current chat history to a JSON file."""
+def save_history(history_list):
+    """Saves the Q&A list securely to a JSON file."""
     with open(HISTORY_FILE, "w", encoding="utf-8") as f:
-        json.dump(messages, f, indent=4)
-# -----------------------------------------
+        json.dump(history_list, f, indent=4)
+# -------------------------------------
 
 # 2. Setup Streamlit Page (The UI)
 st.set_page_config(page_title="NanoPhysics AI Assistant", page_icon="🔬", layout="wide")
 st.title("🔬 NanoPhysics & Nanoelectronics AI Assistant")
 st.markdown("Ask me any question, and I will search across your nanophysics textbooks to write a highly detailed, essay-style answer!")
 
-# --- NEW: Sidebar for Saving/Clearing Chat ---
-with st.sidebar:
-    st.header("💾 Shared Knowledge Base")
-    st.markdown("Save valuable explanations here so others can learn from them!")
-    
-    # Save Button
-    if st.button("💾 Save Chat for Everyone", use_container_width=True):
-        save_chat_history(st.session_state.messages)
-        st.success("Success! The conversation is now permanently saved.")
-        
-    st.divider()
-    
-    # Clear Button (Only clears the current screen, doesn't delete the saved file)
-    if st.button("🧹 Clear My Screen", use_container_width=True):
-        st.session_state.messages = []
-        st.rerun()
-# ---------------------------------------------
-
-# 3. Cache the heavy AI models so the app doesn't slow down
+# 3. Cache the heavy AI models
 @st.cache_resource
 def load_vectorstore():
-    # Connect to the HuggingFace embeddings
     embeddings = HuggingFaceEmbeddings(model_name="BAAI/bge-small-en-v1.5")
-    # Connect to your Pinecone Cloud Database
     vectorstore = PineconeVectorStore(index_name="textbook-index", embedding=embeddings)
     return vectorstore
 
 @st.cache_resource
 def load_llm():
-    # Upgraded to a 70B parameter model for deep reasoning and detailed essay generation
     return ChatGroq(
         model_name="llama-3.3-70b-versatile", 
-        temperature=0.3, # Slightly increased for better creative elaboration
-        max_tokens=3000  # Ensures the AI has enough room to write long essays
+        temperature=0.3, 
+        max_tokens=3000
     )
 
 vectorstore = load_vectorstore()
 llm = load_llm()
 
-# 4. Setup the AI Brain (Optimized for long-form Academic Essays)
+# 4. Setup the AI Brain
 prompt = ChatPromptTemplate.from_template("""
 You are an expert, highly detailed, and professional Physics Professor and academic tutor. 
 Your goal is to write a comprehensive, long-form academic essay to answer the user's question, using the retrieved textbook context as your primary foundation.
@@ -97,51 +80,100 @@ Detailed Essay Answer:
 """)
 
 document_chain = create_stuff_documents_chain(llm, prompt)
-
-# Search the database for the top 8 most relevant paragraphs
 retriever = vectorstore.as_retriever(search_kwargs={"k": 8}) 
 rag_chain = create_retrieval_chain(retriever, document_chain)
 
-# 5. Build the Chat History UI (Now loads from the saved file!)
-if "messages" not in st.session_state:
-    st.session_state.messages = load_chat_history()
+# 5. Initialize State Variables
+if "history" not in st.session_state:
+    # 'history' holds ALL saved Q&As from the database
+    st.session_state.history = load_history()
 
-# Display previous chat messages
-for message in st.session_state.messages:
+if "current_messages" not in st.session_state:
+    # 'current_messages' only holds what is currently visible on the screen
+    st.session_state.current_messages = []
+
+# --- NEW: ChatGPT-Style Sidebar ---
+with st.sidebar:
+    st.header("📚 Chat History")
+    
+    # Button to clear screen for a new question
+    if st.button("➕ New Chat", use_container_width=True):
+        st.session_state.current_messages = []
+        st.rerun()
+        
+    st.divider()
+    st.markdown("**Previous Questions:**")
+    
+    # Loop through history backwards (so newest questions are at the top)
+    for idx, item in enumerate(reversed(st.session_state.history)):
+        q_text = item["question"]
+        # Shorten the question so it fits nicely on the sidebar button
+        btn_text = (q_text[:35] + "...") if len(q_text) > 35 else q_text
+        
+        # If the user clicks a history button, load ONLY that Q&A onto the screen!
+        if st.button(f"📝 {btn_text}", key=f"hist_{idx}", help=q_text):
+            st.session_state.current_messages = [
+                {"role": "user", "content": item["question"]},
+                {"role": "assistant", "content": item["answer"]}
+            ]
+            st.rerun()
+# ----------------------------------
+
+# 6. Display ONLY the currently active conversation
+for message in st.session_state.current_messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-# 6. React to the User's Question
+# 7. React to the User's Question
 if user_input := st.chat_input("Ask a physics question..."):
-    # Show what the user typed
-    with st.chat_message("user"):
-        st.markdown(user_input)
-    st.session_state.messages.append({"role": "user", "content": user_input})
-
-    # Show a loading spinner while AI thinks
-    with st.chat_message("assistant"):
-        with st.spinner("Writing a detailed academic essay based on your textbooks..."):
-            # Pass the question to our RAG chain
-            response = rag_chain.invoke({"input": user_input})
-            answer = response["answer"]
-            
-            # PRO FEATURE: Source Citations
-            sources = []
-            for doc in response["context"]:
-                if 'page' in doc.metadata and 'source' in doc.metadata:
-                    # Extract just the file name (e.g., 'Biology_101.pdf')
-                    book_name = os.path.basename(doc.metadata['source'])
-                    # Extract page number
-                    page_num = doc.metadata['page'] + 1
-                    # Combine them
-                    sources.append(f"**{book_name}** (Page {page_num})")
-            
-            # If we found sources, add them to the bottom of the answer
-            if sources:
-                unique_sources = list(set(sources))
-                answer += f"\n\n---\n**Sources Used:** {', '.join(unique_sources)}"
-            
-            st.markdown(answer)
     
-    # Save AI response to history
-    st.session_state.messages.append({"role": "assistant", "content": answer})
+    # --- SMART SEARCH: Check if this question was already asked! ---
+    # We check if the exact typed question exists in our history
+    existing_item = next((item for item in st.session_state.history if item["question"].strip().lower() == user_input.strip().lower()), None)
+    
+    if existing_item:
+        # If it was asked before, instantly show the saved answer! (Saves time & API usage)
+        st.session_state.current_messages = [
+            {"role": "user", "content": existing_item["question"]},
+            {"role": "assistant", "content": existing_item["answer"]}
+        ]
+        st.rerun()
+        
+    else:
+        # It's a brand NEW question. 
+        # Clear the screen and show the user's new question
+        st.session_state.current_messages = [{"role": "user", "content": user_input}]
+        with st.chat_message("user"):
+            st.markdown(user_input)
+
+        # Show a loading spinner while AI writes the new essay
+        with st.chat_message("assistant"):
+            with st.spinner("Writing a detailed academic essay based on your textbooks..."):
+                response = rag_chain.invoke({"input": user_input})
+                answer = response["answer"]
+                
+                # Source Citations
+                sources = []
+                for doc in response["context"]:
+                    if 'page' in doc.metadata and 'source' in doc.metadata:
+                        book_name = os.path.basename(doc.metadata['source'])
+                        page_num = doc.metadata['page'] + 1
+                        sources.append(f"**{book_name}** (Page {page_num})")
+                
+                if sources:
+                    unique_sources = list(set(sources))
+                    answer += f"\n\n---\n**Sources Used:** {', '.join(unique_sources)}"
+                
+                st.markdown(answer)
+        
+        # 1. Update the screen
+        st.session_state.current_messages.append({"role": "assistant", "content": answer})
+        
+        # 2. Auto-Save to the global history list
+        st.session_state.history.append({
+            "question": user_input,
+            "answer": answer
+        })
+        
+        # 3. Permanently save to the JSON file so everyone can see it
+        save_history(st.session_state.history)
